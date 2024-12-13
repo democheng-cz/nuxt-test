@@ -21,7 +21,7 @@ export default {
   css: [
     'element-ui/lib/theme-chalk/index.css',
     { src: '~/assets/scss/common.scss', lang: 'scss' },
-    { src: '@yige/base/bin/index.css', lang: 'css' },
+    // { src: '@yige/base/bin/index.css', lang: 'css' },
   ],
   // 配置全局scss
 
@@ -54,7 +54,7 @@ export default {
     scss: [
       // 在这里不能使用路径别名 ～ 和 @
       './assets/scss/common.scss',
-      '@yige/base/styles/scss/index.scss',
+      // '@yige/base/styles/scss/index.scss',
     ],
   },
   //配置局域网访问
