@@ -1,5 +1,6 @@
 const env = process.env.ENV
 export default {
+  buildDir: './bundle',
   // Global page headers: https://go.nuxtjs.dev/config-head
   head: {
     title: '顺风耳设计',
