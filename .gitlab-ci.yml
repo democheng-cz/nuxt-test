@@ -1,0 +1,197 @@
+variables:
+  originSSh: 'ssh://git@gitlab.eggrj.com:10022/egg-fe/project/wind/wind_web.git'
+
+stages:
+  - sync
+  - cleanup
+  - reset
+
+sync_online:
+  stage: sync
+  only:
+    - master
+  before_script:
+    - git remote set-url origin $originSSh
+    - git config --global user.name "ci_owner"
+    - git config --global user.email "tf@thinkerx.com"
+  script:
+    - git branch -v;
+    - git fetch;
+
+    # - git show -s --oneline origin/master;
+    # - git show -s --oneline master;
+    # 判断是否是在rebase中，如果是就执行 git rebase --abort
+    - if [ -d "$(git rev-parse --git-path rebase-apply)" ] || [ -d "$(git rev-parse --git-path rebase-merge)" ]; then
+      echo "当前处于 rebase 过程中, 将终止流水线, 请在本地进行online处理rebase以后重新上传";
+      git status;
+      exit 1;
+      fi
+    - git checkout master;
+
+    - |
+      # 列出master30次提交的commitId
+      commitIdList=(
+        $(git log -n 30 --pretty=format:"%H" master)
+      )
+
+      originMasterCommitId=($(git rev-parse origin/master))
+      echo "打印origin/master的commitId $originMasterCommitId"
+
+      # 0: 没回滚; 1: 有回滚
+      resetFlag=0
+    - if [[ " ${commitIdList[@]} " =~ " ${originMasterCommitId} " ]]; then
+      echo "已回滚！";
+      resetFlag=1;
+      else
+      echo "没有回滚！";
+      fi
+    - |
+      # 将 master 与 origin/master 同步
+      git reset origin/master --hard;
+      # 将dev同步成master
+      git push origin master:dev -f
+    # 没有 online 就基于 master 创建 online，有 online 与 origin/online 同步
+    - |
+      git branch -a;
+      if git show-ref --quiet refs/origin/online; then
+      git checkout -b online;
+      else
+      git checkout online;
+      git reset origin/online --hard;
+      fi
+
+      # 如果没有回滚，就rebase master
+      # 如果已回滚，那么online就和master保持一致，同时创建一个online-temp分支作为备份
+    - |
+      if [ $resetFlag -eq 0 ]; then
+      echo '执行 rebase origin/master 操作';
+      git rebase origin/master;
+      else
+      echo '把旧的 online copy 一份到 online-temp 分支';
+      if git show-ref --quiet refs/heads/online-temp; then
+      git branch -D online-temp;
+      fi
+      git checkout -b online-temp;
+      git push origin online-temp -f;
+      echo '把 online 更新成与 master';
+      git checkout master;
+      git branch -D online;
+      git checkout -b online;
+      git branch -D online-temp;
+      fi
+    - git push -f origin online;
+    - echo '处理完 online 以后, 查看分支情况'
+    - git branch -v
+  after_script:
+    - echo "After script section"
+    - echo "cleanup merged branch"
+
+cleanup_merged_branches:
+  stage: cleanup
+  only:
+    - master
+  before_script:
+    - git remote set-url origin $originSSh
+
+  script:
+    - if [ -d "$(git rev-parse --git-path rebase-apply)" ] || [ -d "$(git rev-parse --git-path rebase-merge)" ]; then
+      echo "当前处于 rebase 过程中";
+      fi
+    - |
+      git checkout master
+      # 获取当前所有的分支
+      currentBranchList=(
+        $(git branch --format "%(refname:short)")
+      )
+      echo "打印所有的分支"
+      # 删除除master以外的所有分支
+      for branch in ${currentBranchList[@]}; do
+          if [[ $branch != "master" &&  $branch != "online" ]]; then
+            echo $branch
+            git branch -D $branch
+          fi
+      done
+
+      git fetch
+      remoteList=(
+        $(git branch -r)
+      )
+      echo ------------------所有远程分支-----------------
+      echo "${remoteList[@]}"
+      echo ----------------------------------------------
+      for branch in ${remoteList[@]}; do
+          # 获取到 origin/xxx 后面的 xxx 名字
+          branch_name=${branch#*/}
+          git checkout $branch_name
+          # 打印commitId
+          # git rev-parse HEAD
+      done
+      # 之所以要创建 master-temp 是为了避免 master 被回滚的情况
+      git branch master-temp origin/master
+      echo ------------------master-temp 的 commitId-----------------
+      git rev-parse master-temp
+      echo ----------------------------------------------
+      # 查找合并到master的分支,--format 是为了避免打印出来的内容包含某些文件信息
+      mergedList=(
+        $(git branch --merged master-temp --format "%(refname:short)")
+      )
+      git branch -D master-temp
+      echo ------------------所有合并到master的分支------------------
+      echo "${mergedList[@]}"
+      echo ----------------------------------------------
+      # 下面是删除分支的逻辑
+      for branch in ${mergedList[@]}; do
+        # 排除掉为master、online、test、dev的情况
+        if [[ $branch != "master" && $branch != "online" && $branch != "test" && $branch != "dev" && $branch != "master-temp" && $branch != "main" ]]; then
+          # git branch -D $branch
+          # git push origin :$branch
+          git push origin --delete $branch
+          echo $branch 被删除
+        fi
+      done
+
+# 当处于 rebase 状态中(此时通常由于online rebase master造成的)，需要将 online 更新为远程 online
+reset_online:
+  stage: reset
+  only:
+    - online
+    # 限制这个任务的触发必须是由开发触发的，上面的任务触发的更新online的操作，gitlab_user_name 就是Administrator
+  except:
+    variables:
+      - $GITLAB_USER_NAME == "Administrator"
+  before_script:
+    - git remote set-url origin $originSSh
+
+  script:
+    - git fetch;
+    - git branch -v;
+    # 0 表明不在rebase中, 1标志在rebase中
+    - isRebasing=0;
+    - if [ -d "$(git rev-parse --git-path rebase-apply)" ] || [ -d "$(git rev-parse --git-path rebase-merge)" ]; then
+      echo "当前处于 rebase 过程中";
+      git status;
+      isRebasing=1;
+      else
+      echo "不处于 rebase 过程中, 直接跳过";
+      exit 0;
+      fi
+
+    - |
+      # 获取 origin/online 最近30次的提交
+      commitIdList=(
+        $(git log -n 30 --pretty=format:"%H" origin/online)
+      )
+      originMasterCommitId=($(git rev-parse origin/master))
+
+      # 在 rebase 过程中, 如果origin/online已经对origin/master做了rebase操作, 那么online就直接更新为 origin/online
+      if [ $isRebasing -eq 1 ]; then
+        if [[ " ${commitIdList[@]} " =~ " ${originMasterCommitId} " ]]; then
+        echo "检测到 origin/online 已对 origin/master 做更新操作, 将online同步到origin/online"
+        git rebase --abort;
+        git checkout online;
+        git reset origin/online --hard;
+        else
+        echo "检测到 online 没有对 master 做更新操作, 请在本地 online 分支执行 rebase origin/master 以后重新上传到 online";
+        fi
+      fi
+    - git branch -v;

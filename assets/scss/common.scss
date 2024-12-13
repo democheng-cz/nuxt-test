@@ -1,0 +1,25 @@
+$commonColor: #5f98ff;
+* {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+body {
+  overflow: overlay !important;
+  padding-right: 0px !important;
+}
+html {
+  min-width: 1200px;
+}
+img {
+  width: 100%;
+  height: 100%;
+}
+a {
+  text-decoration: none;
+  color: inherit;
+}
+.modal-open {
+  overflow-y: scroll;
+  padding-right: 0 !important;
+}
